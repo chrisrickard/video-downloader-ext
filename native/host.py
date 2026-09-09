@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Restricted Chrome native host for downloading public X post videos."""
+"""Restricted Chrome native host for downloading X posts and LinkedIn video streams."""
 import json
 import os
 from pathlib import Path
@@ -32,6 +32,33 @@ def canonical_tweet_url(value):
     return f'https://x.com/i/status/{match[1]}' + (f'/video/{match[2]}' if match[2] else '')
 
 
+def canonical_download_url(value):
+    if not isinstance(value, str) or len(value) > 7000:
+        raise ValueError('Please choose a valid video.')
+    url = urlsplit(value)
+    if url.hostname in ('x.com', 'www.x.com', 'twitter.com', 'www.twitter.com'):
+        return canonical_tweet_url(value)
+    if (url.scheme != 'https' or url.hostname not in ('media.licdn.com', 'dms.licdn.com')
+            or url.username or url.password or url.port not in (None, 443)):
+        raise ValueError('Only X posts and LinkedIn media links are supported.')
+    playlist = re.match(r'/playlist/vid/(?:v2/)?[A-Za-z0-9_-]+/', url.path)
+    video = re.match(r'/dms/video/(?:v2/)?[A-Za-z0-9_-]+/', url.path) and url.path.lower().endswith('.mp4')
+    if (not (playlist or video) or re.search(r'\.(?:m4s|ts|aac|m4a)$', url.path, re.I)
+            or (playlist and url.path.lower().endswith('.mp4'))):
+        raise ValueError('Please choose a complete LinkedIn video, not a video fragment.')
+    # LinkedIn media URLs are signed. Keep the query; never accept cookies,
+    # custom request headers, output paths or arbitrary hosts from the website.
+    return url._replace(fragment='').geturl()
+
+
+def video_stem(url):
+    url = canonical_download_url(url)
+    if urlsplit(url).hostname in ('x.com', 'www.x.com', 'twitter.com', 'www.twitter.com'):
+        return 'X-' + url.split('/status/')[1].split('/')[0]
+    asset = re.search(r'/(?:dms/video|playlist/vid)/(?:v2/)?([A-Za-z0-9_-]+)/', urlsplit(url).path)[1]
+    return 'LinkedIn-' + asset[:100]
+
+
 def read_exact(stream, count):
     result = bytearray()
     while len(result) < count:
@@ -61,8 +88,8 @@ def read_message(stream):
 
 
 def build_command(config, url, output_dir, token):
-    url = canonical_tweet_url(url)
-    tweet_id = url.split('/status/')[1].split('/')[0]
+    url = canonical_download_url(url)
+    stem = video_stem(url)
     # No shell, website-selected filenames, cookies, user config, or plugins.
     # Prefer a complete MP4; merge separate MP4/audio streams when necessary.
     return [config['yt_dlp'], '--ignore-config', '--no-playlist',
@@ -73,7 +100,7 @@ def build_command(config, url, output_dir, token):
             '--merge-output-format', 'mp4', '--remux-video', 'mp4',
             '--progress-template', 'download:__BVD_PROGRESS__%(progress._percent_str)s',
             '--print', 'after_move:__BVD_FILE__%(filepath)s',
-            '-o', str(output_dir).replace('%', '%%') + f'/X-{tweet_id}-{token}.%(ext)s', '--', url]
+            '-o', str(output_dir).replace('%', '%%') + f'/{stem}-{token}.%(ext)s', '--', url]
 
 
 def stop_process(process):
@@ -89,12 +116,12 @@ def stop_process(process):
 
 
 def choose_destination(config, url, cancelled):
-    tweet_id = canonical_tweet_url(url).split('/status/')[1].split('/')[0]
+    stem = video_stem(url)
     # Only the native Save dialog supplies this path. The extension and website
     # cannot provide filesystem paths or code for the dialog to execute.
     command = ['/usr/bin/osascript', '-l', 'JavaScript',
                str(Path(__file__).with_name('save_dialog.js')),
-               f'X-{tweet_id}.mp4', config['download_dir']]
+               f'{stem}.mp4', config['download_dir']]
     process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, text=True, start_new_session=True)
     try:
@@ -203,8 +230,8 @@ def download(config, url, send, cancelled):
                 error_log.seek(0)
                 detail = error_log.read(16384).decode('utf-8', errors='replace').lower()
                 if any(word in detail for word in ('login', 'logged in', 'private', 'protected', 'unavailable', 'not found')):
-                    raise ValueError('This video is unavailable or requires an X login. The helper downloads public posts without reading your browser cookies.')
-                raise ValueError('X could not provide a downloadable video. Please try again; yt-dlp may need an update.')
+                    raise ValueError('This video is unavailable or its link has expired. Refresh the page and play it again. The helper does not read your browser cookies.')
+                raise ValueError('The site could not provide a downloadable video. Please try again; yt-dlp may need an update.')
             if not final_path or not final_path.is_file() or final_path.stat().st_size == 0:
                 raise ValueError('The downloader did not produce a complete video file.')
             publish_video(final_path, destination, selected_state)
@@ -250,7 +277,7 @@ def run(config, input_stream, output_stream, origin):
             elif action == 'download':
                 if worker is not None:
                     raise ValueError('Only one download is allowed per connection.')
-                url = canonical_tweet_url(message.get('url'))
+                url = canonical_download_url(message.get('url'))
                 worker = threading.Thread(target=download, args=(config, url, send, cancelled))
                 worker.start()
             else:

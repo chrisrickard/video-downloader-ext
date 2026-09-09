@@ -134,6 +134,22 @@ class NativeTests(unittest.TestCase):
             self.assertEqual(messages[-1], {'status': 'complete', 'filename': destination.name})
             self.assertFalse(list(folder.glob('.blob-video-*')))
 
+    def test_linkedin_signed_stream_validation_and_filename(self):
+        url = 'https://dms.licdn.com/playlist/vid/v2/D5605AQtest/mp4-cmaf/B56abc/0/1788892102?e=123&t=signed'
+        self.assertEqual(host.canonical_download_url(url), url)
+        self.assertEqual(host.video_stem(url), 'LinkedIn-D5605AQtest')
+        command = host.build_command({'yt_dlp': '/tools/yt-dlp', 'ffmpeg': '/tools/ffmpeg'}, url, Path('/videos'), 'abc')
+        self.assertEqual(command[-1], url)
+        self.assertIn('/videos/LinkedIn-D5605AQtest-abc.%(ext)s', command)
+        for invalid in ['https://dms.licdn.com.evil.test/playlist/vid/v2/ID/master.m3u8',
+                        'https://user@dms.licdn.com/playlist/vid/v2/ID/master.m3u8',
+                        'https://media.licdn.com/dms/image/v2/ID/image.jpg',
+                        'https://dms.licdn.com/playlist/vid/v2/ID/segment.m4s',
+                        'https://dms.licdn.com/playlist/vid/v2/ID/segment.mp4',
+                        'file:///etc/passwd']:
+            with self.subTest(url=invalid), self.assertRaises(ValueError):
+                host.canonical_download_url(invalid)
+
 
 if __name__ == '__main__':
     unittest.main()

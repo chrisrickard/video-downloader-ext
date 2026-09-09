@@ -9,6 +9,9 @@ chrome.runtime.onInstalled.addListener(() => {
       reportWorkerError('Reset X download menu', chrome.runtime.lastError);
       return;
     }
+    chrome.contextMenus.create({ id: LI_MENU, title: 'Download this video', contexts: ['all'], documentUrlPatterns: ['https://linkedin.com/*', 'https://www.linkedin.com/*'] }, () => {
+      if (chrome.runtime.lastError) reportWorkerError('Create LinkedIn download menu', chrome.runtime.lastError);
+    });
     chrome.contextMenus.create({ id: X_MENU, title: 'Download this video', contexts: ['all'], documentUrlPatterns: xPatterns }, () => {
       if (chrome.runtime.lastError) reportWorkerError('Create X download menu', chrome.runtime.lastError);
     });
@@ -36,7 +39,7 @@ function saveXJob(job, patch) {
   return job.writes;
 }
 
-async function startXDownload(url, tabId) {
+async function startXDownload(url, tabId, selectionError = 'Right-click a video inside an X post, or use this option on a post’s timestamp link. Refresh the page if you just reloaded the extension.') {
   const id = crypto.randomUUID();
   const job = { record: { id, tabId, url, status: 'connecting', message: 'Connecting to the downloader…', percent: null }, writes: Promise.resolve(), port: null, settled: false, cancelRequested: false };
   xJobs.set(id, job);
@@ -56,9 +59,9 @@ async function startXDownload(url, tabId) {
     // reload. The panel script is idempotent, so it is safe to ensure it here.
     await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: ['x-progress.js'] });
   } catch {
-    await finish({ status: 'error', message: 'Refresh X and try again so the download panel can open.' });
+    await finish({ status: 'error', message: 'Refresh the page and try again so the download panel can open.' });
     await runWorkerTask('Show refresh badge', () => chrome.action.setBadgeText({ tabId, text: '!' }));
-    await runWorkerTask('Show refresh hint', () => chrome.action.setTitle({ tabId, title: 'Refresh X and try the video download again.' }));
+    await runWorkerTask('Show refresh hint', () => chrome.action.setTitle({ tabId, title: 'Refresh the page and try the video download again.' }));
     return;
   }
   await saveXJob(job, {});
@@ -67,7 +70,7 @@ async function startXDownload(url, tabId) {
     return;
   }
   if (!url) {
-    await finish({ status: 'error', message: 'Right-click a video inside an X post, or use this option on a post’s timestamp link. Refresh X if you just reloaded the extension.' });
+    await finish({ status: 'error', message: selectionError });
     return;
   }
   if ([...xJobs.values()].filter(item => !item.settled).length > 2) {
@@ -122,7 +125,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   // Progress/cancel messages come from our isolated content script. Scope them
   // to the sender's tab; page scripts have no direct native-download interface.
-  const ownXTab = sender.tab && sender.frameId === 0 && isXPage(sender.url);
+  const ownXTab = sender.tab && sender.frameId === 0 && (isXPage(sender.url) || isLinkedInPage(sender.url));
   if (message.action === 'getXDownloads' && ownXTab) {
     sendResponse({ jobs: [...xJobs.values()].filter(job => !job.settled && job.record.tabId === sender.tab.id).map(job => ({ ...job.record })) });
   }

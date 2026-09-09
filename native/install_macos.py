@@ -43,12 +43,12 @@ def install(extension_id):
                         + shlex.quote(sys.executable) + ' ' + shlex.quote(str(folder / 'host.py')) + ' "$@"\n')
     launcher.chmod(0o700)
     (folder / 'config.json').chmod(0o600)
-    manifest = {'name': HOST_NAME, 'description': 'Download public X videos with yt-dlp',
+    manifest = {'name': HOST_NAME, 'description': 'Download X and LinkedIn videos with yt-dlp',
                 'path': str(launcher), 'type': 'stdio', 'allowed_origins': [allowed_origin]}
     manifest_path.write_text(json.dumps(manifest, indent=2) + '\n')
     print(f'Helper installed for extension {extension_id}.')
     print(f'Save dialog default folder: {config["download_dir"]}')
-    print('Reload the extension in Chrome, then refresh your X tabs.')
+    print('Reload the extension in Chrome, then refresh your X and LinkedIn tabs.')
 
 
 if __name__ == '__main__':

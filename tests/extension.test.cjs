@@ -22,7 +22,7 @@ function setup() {
   const evaluate = file => vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), scope, {filename: file});
   scope.importScripts = (...files) => files.forEach(evaluate);
   evaluate('background.js');
-  return { scope, chrome, data, tabs, ports, menus, deliveries, replies, errors, async click(info = {}, tab = {id: 10, url: 'https://x.com/u/status/123'}) { await chrome.contextMenus.onClicked.listeners[0]({ menuItemId: 'download-x-video', pageUrl: tab.url, ...info }, tab); }, async message(msg, sender) { for (const fn of chrome.runtime.onMessage.listeners) fn(msg, sender, reply => replies.push(reply)); await tick(); } };
+  return { scope, chrome, data, tabs, ports, menus, deliveries, replies, errors, async click(info = {}, tab = {id: 10, url: 'https://x.com/u/status/123'}) { for (const listener of chrome.contextMenus.onClicked.listeners) await listener({ menuItemId: 'download-x-video', pageUrl: tab.url, ...info }, tab); }, async message(msg, sender) { for (const fn of chrome.runtime.onMessage.listeners) fn(msg, sender, reply => replies.push(reply)); await tick(); } };
 }
 
 test('only canonical X post links are accepted', () => {
@@ -33,7 +33,7 @@ test('only canonical X post links are accepted', () => {
 
 test('menu is restricted to X and a real menu click starts a download', async () => {
   const app = setup(); app.chrome.runtime.onInstalled.listeners[0]();
-  assert(app.menus[0].documentUrlPatterns.every(url => url.startsWith('https://')));
+  assert(app.menus.find(menu => menu.id === 'download-x-video').documentUrlPatterns.every(url => url.startsWith('https://')));
   await app.click();
   assert.equal(app.ports[0].sent[0].url, 'https://x.com/i/status/123');
   assert.equal(app.tabs.length, 0);
@@ -174,4 +174,66 @@ test('reload during menu registration and refresh badge updates is handled', asy
   assert.equal(app.ports.length, 0);
   assert.equal(vm.runInContext('xJobs.size', app.scope), 0);
   assert.deepEqual(app.errors, []);
+});
+
+
+const liPage = 'https://www.linkedin.com/search/results/all/?keywords=video';
+const liURL = 'https://dms.licdn.com/playlist/vid/v2/D5605AQtest/mp4-cmaf/B56abc/0/1788892102?e=123&v=beta&t=signed';
+const liSender = {tab: {id: 10}, frameId: 0, url: liPage};
+const liClick = app => app.click({menuItemId: 'download-linkedin-video'}, {id: 10, url: liPage});
+
+test('LinkedIn menu and native request use only the clicked player source', async () => {
+  const app = setup(); app.chrome.runtime.onInstalled.listeners[0]();
+  assert(app.menus.find(menu => menu.id === 'download-linkedin-video').documentUrlPatterns.includes('https://www.linkedin.com/*'));
+  await app.message({action: 'rememberLinkedInContext', context: {playerId: 'chosen', assetId: 'D5605AQtest'}}, liSender);
+  app.chrome.scripting.executeScript = async options => options.world === 'MAIN' ? [{result: [liURL]}] : [];
+  await liClick(app);
+  assert.equal(app.ports[0].sent[0].url, liURL);
+  assert.equal(app.tabs.length, 0);
+  await app.message({action: 'getXDownloads'}, liSender);
+  assert.equal(app.replies.at(-1).jobs.length, 1);
+  app.ports[0].onMessage.listeners[0]({status: 'complete', filename: 'LinkedIn.mp4'});
+  await tick();
+  assert.equal(app.deliveries.at(-1).message.job.status, 'complete');
+});
+
+test('LinkedIn network fallback matches the clicked poster, not another result', async () => {
+  const app = setup();
+  const otherURL = liURL.replace('D5605AQtest', 'OTHER');
+  for (const listener of app.chrome.webRequest.onBeforeRequest.listeners) {
+    listener({tabId: 10, url: liURL}); listener({tabId: 10, url: otherURL});
+  }
+  await app.message({action: 'rememberLinkedInContext', context: {playerId: 'chosen', assetId: 'D5605AQtest'}}, liSender);
+  app.chrome.scripting.executeScript = async options => options.world === 'MAIN' ? [{result: [otherURL]}] : [];
+  await liClick(app);
+  assert.equal(app.ports[0].sent[0].url, liURL);
+});
+
+test('LinkedIn does not download a different post if the clicked video is unresolved', async () => {
+  const app = setup();
+  for (const listener of app.chrome.webRequest.onBeforeRequest.listeners) listener({tabId: 10, url: liURL});
+  await app.message({action: 'rememberLinkedInContext', context: {playerId: 'chosen', assetId: 'MISSING'}}, liSender);
+  app.chrome.scripting.executeScript = async options => options.world === 'MAIN' ? [{result: [liURL]}] : [];
+  await liClick(app);
+  assert.equal(app.ports.length, 0);
+  assert.match(app.deliveries.at(-1).message.job.message, /Play this LinkedIn video/);
+});
+
+test('LinkedIn URL checks reject unrelated hosts, fragments and credentials', () => {
+  const {scope} = setup();
+  assert.equal(scope.canonicalLinkedInMedia(liURL), liURL);
+  for (const url of ['https://dms.licdn.com.evil.test/playlist/vid/v2/ID/master.m3u8',
+    'http://dms.licdn.com/playlist/vid/v2/ID/master.m3u8',
+    'https://user:pass@dms.licdn.com/playlist/vid/v2/ID/master.m3u8',
+    'https://media.licdn.com/dms/image/v2/ID/image.jpg',
+    'https://dms.licdn.com/playlist/vid/v2/ID/segment.m4s',
+    'https://dms.licdn.com/playlist/vid/v2/ID/segment.mp4',
+    'file:///etc/passwd']) assert.equal(scope.canonicalLinkedInMedia(url), null);
+});
+
+test('a different site cannot submit LinkedIn download context', async () => {
+  const app = setup();
+  await app.message({action: 'rememberLinkedInContext', context: {url: liURL}}, {tab:{id:10}, frameId:0, url:'https://evil.test'});
+  await liClick(app);
+  assert.equal(app.ports.length, 0);
 });

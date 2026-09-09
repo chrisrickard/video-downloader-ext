@@ -78,7 +78,7 @@
           const reply = await chrome.runtime.sendMessage({ action: 'cancelXDownload', jobId: job.id });
           if (!reply?.ok) render({ id: job.id, status: 'error', message: 'This download is no longer active.' });
         } catch {
-          render({ id: job.id, status: 'error', message: 'The extension was reloaded. Refresh X to reconnect.' });
+          render({ id: job.id, status: 'error', message: 'The extension was reloaded. Refresh the page to reconnect.' });
         }
       });
       list.append(card);

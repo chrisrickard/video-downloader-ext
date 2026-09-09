@@ -1,18 +1,24 @@
-# Right-click downloads on X (macOS + Chrome)
+# Right-click downloads on X and LinkedIn (macOS + Chrome)
 
-Right-click a video in an X post and select **Download this video**. A small
+Right-click a video in an X or LinkedIn post and select **Download this video**. A small
 progress panel appears at the bottom-right of the page, and a macOS Save dialog
 lets you choose a filename and folder before downloading. Downloads is the
 default folder. The panel disappears 3.5 seconds after completion. Errors stay visible until dismissed. No new tab opens.
 
 Use **Cancel download** to stop it. Dismissing the panel or navigating away keeps
-the download running; keep Chrome open until it finishes. Refreshing X restores
+the download running; keep Chrome open until it finishes. Refreshing the page restores
 the panel for downloads that are still active in that tab.
 
-The menu also works on a post's timestamp link. On timelines and replies it
+On X, the menu also works on a post's timestamp link. On timelines and replies it
 uses the post you clicked, rather than the current tab's main post. For posts
 with several rendered video players it requests the clicked video's index.
 If X changes its page structure, the extension may need an update.
+
+On LinkedIn, play the video briefly before right-clicking. The extension reads
+that player's stream or matches observed media requests to its poster's asset ID.
+It never chooses an unrelated video from other posts in the tab. No browser
+cookies are exported. LinkedIn Learning and externally embedded players are not
+supported by this feature.
 
 ## One-time setup
 
@@ -27,7 +33,7 @@ If X changes its page structure, the extension may need an update.
    ```
 
 4. Reload the extension at `chrome://extensions` and accept Chrome's updated
-   permission prompt if shown. Refresh any X tabs that were already open.
+   permission prompt if shown. Refresh any X or LinkedIn tabs that were already open.
 
 The added permissions are `contextMenus` (the right-click item) and
 `nativeMessaging` (the local downloader). The installer registers only the
@@ -37,7 +43,9 @@ extension settings itself.
 ## What the helper does
 
 - Chrome launches the helper on demand; no server or listening network port runs.
-- Only HTTPS X/Twitter post URLs are accepted, and tracking queries are removed.
+- Only HTTPS X/Twitter post URLs and LinkedIn media URLs on `dms.licdn.com`
+  or `media.licdn.com` are accepted. Signed LinkedIn queries are preserved;
+  tracking queries are removed from X post links.
 - The helper executes a fixed yt-dlp argument list without a shell. It ignores
   yt-dlp configuration and disables plugins. Websites cannot choose commands,
   arguments, or output directories.
