@@ -1,4 +1,4 @@
-importScripts('x-url.js', 'x-downloads.js');
+importScripts('worker-api.js', 'x-url.js', 'x-downloads.js');
 
 // Store detected video URLs by tab ID
 // Structure: { [tabId]: [ { url: string, type: string, filename: string, title: string, detectedAt: number }, ... ] }
@@ -7,7 +7,7 @@ const detectedVideos = {};
 // Clean up stored videos when a tab is closed
 chrome.tabs.onRemoved.addListener((tabId) => {
   delete detectedVideos[tabId];
-  chrome.storage.local.remove(`tab_${tabId}`);
+  void runWorkerTask('Clear detected videos', () => chrome.storage.local.remove(`tab_${tabId}`));
 });
 
 // Clean up when navigating to a new page
@@ -15,7 +15,7 @@ chrome.webNavigation.onBeforeNavigate.addListener((details) => {
   // Only clear for the main frame navigation
   if (details.frameId === 0) {
     detectedVideos[details.tabId] = [];
-    chrome.storage.local.remove(`tab_${details.tabId}`);
+    void runWorkerTask('Clear videos on navigation', () => chrome.storage.local.remove(`tab_${details.tabId}`));
     updateBadge(details.tabId);
   }
 });
@@ -81,21 +81,21 @@ function addDetectedVideo(tabId, url, type, title = '') {
     updateBadge(tabId);
     
     // Save to storage so the popup can retrieve it
-    chrome.storage.local.set({ [`tab_${tabId}`]: detectedVideos[tabId] });
+    void runWorkerTask('Cache detected videos', () => chrome.storage.local.set({ [`tab_${tabId}`]: detectedVideos[tabId] }));
   }
 }
 
 // Update the badge count for a tab
 function updateBadge(tabId) {
   const count = detectedVideos[tabId] ? detectedVideos[tabId].length : 0;
-  chrome.action.setBadgeText({
+  void runWorkerTask('Update video count badge', () => chrome.action.setBadgeText({
     tabId: tabId,
     text: count > 0 ? count.toString() : ''
-  });
-  chrome.action.setBadgeBackgroundColor({
+  }));
+  void runWorkerTask('Update video badge color', () => chrome.action.setBadgeBackgroundColor({
     tabId: tabId,
     color: '#6366f1' // Indigo accent color
-  });
+  }));
 }
 
 // Intercept network requests
@@ -151,7 +151,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.action === 'clearDetectedVideos') {
     const tabId = message.tabId;
     detectedVideos[tabId] = [];
-    chrome.storage.local.remove(`tab_${tabId}`);
+    void runWorkerTask('Clear detected videos', () => chrome.storage.local.remove(`tab_${tabId}`));
     updateBadge(tabId);
     sendResponse({ success: true });
   }

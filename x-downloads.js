@@ -5,7 +5,13 @@ const xPatterns = ['https://x.com/*', 'https://www.x.com/*', 'https://twitter.co
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({ id: X_MENU, title: 'Download this video', contexts: ['all'], documentUrlPatterns: xPatterns });
+    if (chrome.runtime.lastError) {
+      reportWorkerError('Reset X download menu', chrome.runtime.lastError);
+      return;
+    }
+    chrome.contextMenus.create({ id: X_MENU, title: 'Download this video', contexts: ['all'], documentUrlPatterns: xPatterns }, () => {
+      if (chrome.runtime.lastError) reportWorkerError('Create X download menu', chrome.runtime.lastError);
+    });
   });
 });
 
@@ -20,7 +26,9 @@ function saveXJob(job, patch) {
   Object.assign(job.record, patch);
   const snapshot = { ...job.record };
   job.writes = job.writes.then(async () => {
-    await chrome.storage.session.set({ [`x_job_${snapshot.id}`]: snapshot });
+    // This cache is optional: a storage failure must not poison the progress
+    // queue or prevent the native port from closing after completion.
+    await runWorkerTask('Cache X download progress', () => chrome.storage.session.set({ [`x_job_${snapshot.id}`]: snapshot }));
     // The page may have been closed or navigated away. Delivery failure must
     // not interrupt a download that is already running in the background.
     await chrome.tabs.sendMessage(snapshot.tabId, { action: 'xDownloadProgress', job: snapshot }, { frameId: 0 }).catch(() => {});
@@ -36,9 +44,12 @@ async function startXDownload(url, tabId) {
   const finish = async (patch) => {
     if (job.settled) return;
     job.settled = true;
-    await saveXJob(job, patch);
-    job.port?.disconnect();
-    xJobs.delete(id);
+    try {
+      await saveXJob(job, patch);
+    } finally {
+      try { job.port?.disconnect(); }
+      finally { xJobs.delete(id); }
+    }
   };
   try {
     // Content scripts on existing pages may not be present after an extension
@@ -46,8 +57,8 @@ async function startXDownload(url, tabId) {
     await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: ['x-progress.js'] });
   } catch {
     await finish({ status: 'error', message: 'Refresh X and try again so the download panel can open.' });
-    await chrome.action.setBadgeText({ tabId, text: '!' });
-    await chrome.action.setTitle({ tabId, title: 'Refresh X and try the video download again.' });
+    await runWorkerTask('Show refresh badge', () => chrome.action.setBadgeText({ tabId, text: '!' }));
+    await runWorkerTask('Show refresh hint', () => chrome.action.setTitle({ tabId, title: 'Refresh X and try the video download again.' }));
     return;
   }
   await saveXJob(job, {});
@@ -70,17 +81,17 @@ async function startXDownload(url, tabId) {
     job.port.onMessage.addListener(message => {
       if (job.settled) return;
       if (message.status === 'complete') {
-        void finish({ status: 'complete', message: 'Saved to your chosen folder', filename: String(message.filename || ''), percent: 100 });
+        void runWorkerTask('Finish X download', () => finish({ status: 'complete', message: 'Saved to your chosen folder', filename: String(message.filename || ''), percent: 100 }));
       } else if (message.status === 'error' || message.status === 'cancelled') {
-        void finish({ status: message.status, message: String(message.message || 'Download stopped.') });
+        void runWorkerTask('Finish X download', () => finish({ status: message.status, message: String(message.message || 'Download stopped.') }));
       } else if (message.status === 'progress') {
         const percent = Number.isFinite(message.percent) ? Math.max(0, Math.min(100, message.percent)) : null;
-        void saveXJob(job, { status: 'downloading', message: String(message.message || 'Downloading…'), percent });
+        void runWorkerTask('Update X download progress', () => saveXJob(job, { status: 'downloading', message: String(message.message || 'Downloading…'), percent }));
       }
     });
     job.port.onDisconnect.addListener(() => {
       const error = chrome.runtime.lastError;
-      if (!job.settled) void finish({ status: 'error', message: error ? 'Chrome could not connect to the local helper. Check that it is installed for this extension ID, then reload the extension.' : 'The downloader stopped before finishing. Please try again.' });
+      if (!job.settled) void runWorkerTask('Finish X download', () => finish({ status: 'error', message: error ? 'Chrome could not connect to the local helper. Check that it is installed for this extension ID, then reload the extension.' : 'The downloader stopped before finishing. Please try again.' }));
     });
     job.port.postMessage({ action: 'download', url });
   } catch {
@@ -88,7 +99,7 @@ async function startXDownload(url, tabId) {
   }
 }
 
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+chrome.contextMenus.onClicked.addListener((info, tab) => runWorkerTask('Start X video download', async () => {
   if (info.menuItemId !== X_MENU || !tab?.id || !isXPage(info.pageUrl || tab.url)) return;
   const key = `x_context_${tab.id}`;
   const stored = (await chrome.storage.session.get(key))[key];
@@ -97,13 +108,16 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const recent = stored && Date.now() - stored.at < 120000 && stored.pageUrl === (info.pageUrl || tab.url);
   const url = canonicalTweetUrl(info.linkUrl) || (recent ? canonicalTweetUrl(stored.url) : canonicalTweetUrl(info.pageUrl || tab.url));
   await startXDownload(url, tab.id);
-});
+}));
 
-chrome.tabs.onRemoved.addListener(tabId => { void chrome.storage.session.remove(`x_context_${tabId}`); });
+chrome.tabs.onRemoved.addListener(tabId => { void runWorkerTask('Clear X post context', () => chrome.storage.session.remove(`x_context_${tabId}`)); });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'rememberTweetContext' && sender.tab && sender.frameId === 0 && isXPage(sender.url)) {
-    chrome.storage.session.set({ [`x_context_${sender.tab.id}`]: { url: canonicalTweetUrl(message.url), at: Date.now(), pageUrl: sender.url } }).then(() => sendResponse({ ok: true }));
+    chrome.storage.session.set({ [`x_context_${sender.tab.id}`]: { url: canonicalTweetUrl(message.url), at: Date.now(), pageUrl: sender.url } }).then(() => sendResponse({ ok: true }), error => {
+      reportWorkerError('Remember clicked X video', error);
+      sendResponse({ ok: false });
+    });
     return true;
   }
   // Progress/cancel messages come from our isolated content script. Scope them

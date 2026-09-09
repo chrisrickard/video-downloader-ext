@@ -7,19 +7,22 @@ const crypto = require('node:crypto');
 const event = () => ({ listeners: [], addListener(fn) { this.listeners.push(fn); } });
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function setup() {
-  const data = {}, tabs = [], ports = [], menus = [], deliveries = [], replies = [];
+  const data = {}, tabs = [], ports = [], menus = [], deliveries = [], replies = [], errors = [];
   const chrome = {
     runtime: { id: 'a'.repeat(32), onInstalled: event(), onMessage: event(), getURL: p => 'chrome-extension://' + 'a'.repeat(32) + '/' + p,
       connectNative(name) { const port = { name, onMessage: event(), onDisconnect: event(), sent: [], disconnected: false, postMessage(m) { this.sent.push(m); }, disconnect() { this.disconnected = true; } }; ports.push(port); return port; } },
-    contextMenus: { onClicked: event(), removeAll(cb) { cb(); }, create(menu) { menus.push(menu); } },
-    storage: { session: { async get(key) { return { [key]: data[key] }; }, async set(values) { Object.assign(data, values); }, async remove(key) { delete data[key]; } } },
+    contextMenus: { onClicked: event(), removeAll(cb) { cb(); }, create(menu, cb) { menus.push(menu); cb?.(); } },
+    storage: { local: { async set() {}, async remove() {} }, session: { async get(key) { return { [key]: data[key] }; }, async set(values) { Object.assign(data, values); }, async remove(key) { delete data[key]; } } },
     tabs: { onRemoved: event(), async create(tab) { tabs.push(tab); }, async sendMessage(tabId, message, options) { deliveries.push({tabId, message, options}); } },
     scripting: { async executeScript() {} },
-    action: { async setBadgeText() {}, async setTitle() {} }
+    action: { async setBadgeText() {}, async setTitle() {}, async setBadgeBackgroundColor() {} },
+    webNavigation: { onBeforeNavigate: event() }, webRequest: { onBeforeRequest: event() }
   };
-  const scope = vm.createContext({ chrome, URL, crypto, console });
-  for (const file of ['x-url.js', 'x-downloads.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), scope);
-  return { scope, chrome, data, tabs, ports, menus, deliveries, replies, async click(info = {}, tab = {id: 10, url: 'https://x.com/u/status/123'}) { await chrome.contextMenus.onClicked.listeners[0]({ menuItemId: 'download-x-video', pageUrl: tab.url, ...info }, tab); }, async message(msg, sender) { for (const fn of chrome.runtime.onMessage.listeners) fn(msg, sender, reply => replies.push(reply)); await tick(); } };
+  const scope = vm.createContext({ chrome, URL, crypto, console: {error: message => errors.push(message)} });
+  const evaluate = file => vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), scope, {filename: file});
+  scope.importScripts = (...files) => files.forEach(evaluate);
+  evaluate('background.js');
+  return { scope, chrome, data, tabs, ports, menus, deliveries, replies, errors, async click(info = {}, tab = {id: 10, url: 'https://x.com/u/status/123'}) { await chrome.contextMenus.onClicked.listeners[0]({ menuItemId: 'download-x-video', pageUrl: tab.url, ...info }, tab); }, async message(msg, sender) { for (const fn of chrome.runtime.onMessage.listeners) fn(msg, sender, reply => replies.push(reply)); await tick(); } };
 }
 
 test('only canonical X post links are accepted', () => {
@@ -114,4 +117,61 @@ test('failure to inject the panel does not start an invisible download', async (
   await app.click();
   assert.equal(app.ports.length, 0);
   assert.equal(Object.values(app.data)[0].status, 'error');
+});
+
+
+test('reload rejections in background badge, cache and context APIs are handled', async () => {
+  const app = setup();
+  const stopped = async () => { throw new Error('No SW'); };
+  app.chrome.storage.local.set = stopped;
+  app.chrome.storage.local.remove = stopped;
+  app.chrome.storage.session.set = stopped;
+  app.chrome.storage.session.remove = stopped;
+  app.chrome.storage.session.get = stopped;
+  app.chrome.action.setBadgeText = stopped;
+  app.chrome.action.setBadgeBackgroundColor = stopped;
+  app.chrome.webRequest.onBeforeRequest.listeners[0]({tabId: 10, url: 'https://video.twimg.com/test.mp4'});
+  app.chrome.webNavigation.onBeforeNavigate.listeners[0]({tabId: 10, frameId: 0});
+  for (const listener of app.chrome.tabs.onRemoved.listeners) listener(10);
+  await app.message({action: 'clearDetectedVideos', tabId: 10}, {});
+  await app.message({action: 'rememberTweetContext', url: 'https://x.com/u/status/123'}, {tab: {id: 10}, frameId: 0, url: 'https://x.com/u/status/123'});
+  assert.equal(app.replies.at(-1).ok, false);
+  await app.click();
+  await tick();
+  assert.equal(app.ports.length, 0);
+  assert.deepEqual(app.errors, []);
+});
+
+test('a rejected cache update cannot strand a finished native download', async () => {
+  const app = setup(); await app.click();
+  app.chrome.storage.session.set = async () => { throw new Error('No SW'); };
+  app.ports[0].onMessage.listeners[0]({status: 'progress', percent: 60});
+  app.ports[0].onMessage.listeners[0]({status: 'complete', filename: 'Saved.mp4'});
+  await tick(); await tick();
+  assert.equal(app.deliveries.at(-1).message.job.status, 'complete');
+  assert.equal(app.ports[0].disconnected, true);
+  assert.equal(vm.runInContext('xJobs.size', app.scope), 0);
+  assert.deepEqual(app.errors, []);
+});
+
+test('unexpected API failures retain a useful diagnostic', async () => {
+  const app = setup();
+  await app.scope.runWorkerTask('Cache test', async () => { throw new Error('Quota exceeded'); });
+  assert.deepEqual(app.errors, ['Cache test: Quota exceeded']);
+});
+
+test('reload during menu registration and refresh badge updates is handled', async () => {
+  const app = setup();
+  app.chrome.runtime.lastError = {message: 'No SW'};
+  app.chrome.runtime.onInstalled.listeners[0]();
+  assert.equal(app.menus.length, 0);
+  delete app.chrome.runtime.lastError;
+  const stopped = async () => { throw new Error('No SW'); };
+  app.chrome.scripting.executeScript = stopped;
+  app.chrome.action.setBadgeText = stopped;
+  app.chrome.action.setTitle = stopped;
+  await app.click();
+  assert.equal(app.ports.length, 0);
+  assert.equal(vm.runInContext('xJobs.size', app.scope), 0);
+  assert.deepEqual(app.errors, []);
 });

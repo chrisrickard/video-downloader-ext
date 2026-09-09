@@ -18,10 +18,15 @@ function findTweetVideo(target) {
 }
 
 window.addEventListener('contextmenu', event => {
-  if (!event.isTrusted) return;
+  if (!event.isTrusted || !chrome.runtime?.id) return;
   const context = findTweetVideo(event.target);
   // Let Chrome's native menu open over X's player. Do not preventDefault():
   // that would also hide the extension's download menu item.
-  if (context.overVideo && context.url) event.stopImmediatePropagation();
-  chrome.runtime.sendMessage({ action: 'rememberTweetContext', url: context.url }).catch(() => {});
+  try {
+    chrome.runtime.sendMessage({ action: 'rememberTweetContext', url: context.url }).catch(() => {});
+    if (context.overVideo && context.url) event.stopImmediatePropagation();
+  } catch {
+    // An old content script can survive an extension reload until X refreshes.
+    // Leave the site's menu alone when that script no longer has a connection.
+  }
 }, true);
