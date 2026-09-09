@@ -16,7 +16,7 @@ function setup() {
     tabs: { onRemoved: event(), async create(tab) { tabs.push(tab); }, async sendMessage(tabId, message, options) { deliveries.push({tabId, message, options}); } },
     scripting: { async executeScript() {} },
     action: { async setBadgeText() {}, async setTitle() {}, async setBadgeBackgroundColor() {} },
-    webNavigation: { onBeforeNavigate: event() }, webRequest: { onBeforeRequest: event() }
+    webNavigation: { onBeforeNavigate: event() }, webRequest: { onBeforeRequest: event(), onHeadersReceived: event() }
   };
   const scope = vm.createContext({ chrome, URL, crypto, console: {error: message => errors.push(message)} });
   const evaluate = file => vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), scope, {filename: file});
@@ -200,11 +200,12 @@ test('LinkedIn menu and native request use only the clicked player source', asyn
 test('LinkedIn network fallback matches the clicked poster, not another result', async () => {
   const app = setup();
   const otherURL = liURL.replace('D5605AQtest', 'OTHER');
-  for (const listener of app.chrome.webRequest.onBeforeRequest.listeners) {
-    listener({tabId: 10, url: liURL}); listener({tabId: 10, url: otherURL});
+  for (const listener of app.chrome.webRequest.onHeadersReceived.listeners) {
+    listener({tabId: 10, url: liURL, responseHeaders: [{name: 'Content-Type', value: 'application/dash+xml'}]});
+    listener({tabId: 10, url: otherURL, responseHeaders: [{name: 'Content-Type', value: 'application/dash+xml'}]});
   }
   await app.message({action: 'rememberLinkedInContext', context: {playerId: 'chosen', assetId: 'D5605AQtest'}}, liSender);
-  app.chrome.scripting.executeScript = async options => options.world === 'MAIN' ? [{result: [otherURL]}] : [];
+  app.chrome.scripting.executeScript = async options => options.world === 'MAIN' ? [{result: []}] : [];
   await liClick(app);
   assert.equal(app.ports[0].sent[0].url, liURL);
 });
@@ -213,7 +214,7 @@ test('LinkedIn does not download a different post if the clicked video is unreso
   const app = setup();
   for (const listener of app.chrome.webRequest.onBeforeRequest.listeners) listener({tabId: 10, url: liURL});
   await app.message({action: 'rememberLinkedInContext', context: {playerId: 'chosen', assetId: 'MISSING'}}, liSender);
-  app.chrome.scripting.executeScript = async options => options.world === 'MAIN' ? [{result: [liURL]}] : [];
+  app.chrome.scripting.executeScript = async options => options.world === 'MAIN' ? [{result: []}] : [];
   await liClick(app);
   assert.equal(app.ports.length, 0);
   assert.match(app.deliveries.at(-1).message.job.message, /Play this LinkedIn video/);
@@ -236,4 +237,23 @@ test('a different site cannot submit LinkedIn download context', async () => {
   await app.message({action: 'rememberLinkedInContext', context: {url: liURL}}, {tab:{id:10}, frameId:0, url:'https://evil.test'});
   await liClick(app);
   assert.equal(app.ports.length, 0);
+});
+
+
+test('LinkedIn cache ignores binary initialization fragments under playlist URLs', async () => {
+  const app = setup();
+  for (const listener of app.chrome.webRequest.onHeadersReceived.listeners) listener({tabId: 10, url: liURL, responseHeaders: [{name:'Content-Type',value:'video/mp4'}]});
+  await app.message({action:'rememberLinkedInContext',context:{playerId:'missing',assetId:'D5605AQtest'}},liSender);
+  app.chrome.scripting.executeScript = async () => [];
+  await liClick(app);
+  assert.equal(app.ports.length,0);
+});
+
+test('the clicked player source is authoritative even when its manifest and poster IDs differ', async () => {
+  const app = setup();
+  await app.message({action:'rememberLinkedInContext',context:{playerId:'chosen',assetId:'POSTER'}},liSender);
+  const dash = 'https://dms.licdn.com/playlist/vid/dash/VIDEO/master?token=signed';
+  app.chrome.scripting.executeScript = async options => options.world === 'MAIN' ? [{result:[dash]}] : [];
+  await liClick(app);
+  assert.equal(app.ports[0].sent[0].url,dash);
 });

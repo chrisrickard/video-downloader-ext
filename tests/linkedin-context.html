@@ -1,0 +1,37 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'">
+<title>LinkedIn video selection regression</title>
+<!-- Matches the observed Video.js DOM structure, without any user media URLs. -->
+<div data-vjs-player="true" id="first-player">
+  <video id="picture" src="blob:https://www.linkedin.com/example"></video>
+  <div class="vjs-poster"><picture><img loading="lazy" src="https://media.licdn.com/dms/image/v2/FIRST/videocover-low/example"></picture></div>
+  <button id="control">Play</button>
+</div>
+<div data-vjs-player="true" id="second-player">
+  <video id="other-picture"></video>
+  <div class="vjs-poster"><picture><img loading="lazy" src="https://media.licdn.com/dms/image/v2/SECOND/videocover-low/example"></picture></div>
+</div>
+<video id="standalone" src="https://media.licdn.com/dms/video/v2/THIRD/file.mp4"></video>
+<p id="result">Running…</p>
+<script>
+  // Stub only the extension messaging boundary; selectors run against real DOM.
+  let messages = 0;
+  window.chrome = {runtime: {id: 'test', sendMessage: async () => { messages++; }}};
+</script>
+<script src="../linkedin-url.js"></script>
+<script src="../linkedin-context.js"></script>
+<script>
+  function check(condition, message) { if (!condition) throw new Error(message); }
+  for (const id of ['picture', 'control', 'first-player']) {
+    const context = findLinkedInVideo(document.getElementById(id));
+    check(context.playerId === 'first-player', id + ': must select the enclosing player');
+    check(context.assetId === 'FIRST', id + ': must find the poster of that player');
+  }
+  check(findLinkedInVideo(document.getElementById('other-picture')).assetId === 'SECOND', 'Must distinguish neighbouring posts');
+  check(findLinkedInVideo(document.getElementById('standalone')).url.endsWith('/THIRD/file.mp4'), 'Standalone MP4 still works');
+  check(findLinkedInVideo(document.getElementById('result')) === null, 'Outside click must not choose a video');
+  document.getElementById('picture').dispatchEvent(new MouseEvent('contextmenu', {bubbles:true}));
+  check(messages === 0, 'Synthetic page clicks must not send extension messages');
+  document.getElementById('result').textContent = 'PASS: picture, controls, player, neighbouring posts, standalone MP4 and synthetic event checks';
+</script>

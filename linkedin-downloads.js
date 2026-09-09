@@ -1,25 +1,33 @@
 const LI_MENU = 'download-linkedin-video';
 const linkedInStreams = new Map();
 
-chrome.webRequest.onBeforeRequest.addListener(details => {
+// LinkedIn puts initialization segments and captions under /playlist/ too.
+// Cache only responses confirmed to be manifests (or a full progressive MP4),
+// rather than treating every request with that pathname as a playable stream.
+chrome.webRequest.onHeadersReceived.addListener(details => {
   if (details.tabId < 0) return;
   const url = canonicalLinkedInMedia(details.url);
   const assetId = linkedInAssetId(url);
   if (!url || !assetId) return;
+  const mime = details.responseHeaders?.find(header => header.name.toLowerCase() === 'content-type')?.value?.split(';')[0].trim().toLowerCase();
+  const manifest = ['application/dash+xml', 'application/vnd.apple.mpegurl', 'application/x-mpegurl', 'audio/mpegurl', 'audio/x-mpegurl'].includes(mime);
+  const progressive = mime === 'video/mp4' && new URL(url).pathname.startsWith('/dms/video/');
+  if (!manifest && !progressive) return;
   const streams = linkedInStreams.get(details.tabId) || new Map();
   streams.set(assetId, url);
-  // Bound tab-local metadata; never retain a browsing history of media URLs.
   if (streams.size > 100) streams.delete(streams.keys().next().value);
   linkedInStreams.set(details.tabId, streams);
-}, { urls: ['https://dms.licdn.com/*', 'https://media.licdn.com/*'] });
+}, { urls: ['https://dms.licdn.com/*', 'https://media.licdn.com/*'] }, ['responseHeaders']);
 
 // Read only the clicked Video.js player's current source. This runs in the page
 // world because blob: URLs hide the underlying HLS URL from isolated scripts.
 // Treat the result as untrusted and validate it before using the native helper.
 function readLinkedInPlayer(playerId) {
-  const element = document.getElementById(playerId);
-  if (!element) return [];
-  const player = element.player || window.videojs?.getPlayer?.(playerId);
+  const clicked = document.getElementById(playerId);
+  if (!clicked) return [];
+  // Also normalize older saved contexts that contained the inner video ID.
+  const element = clicked.closest('[data-vjs-player], .video-js, [role="region"][aria-label="Video Player"]') || clicked;
+  const player = element.player || window.videojs?.getPlayer?.(element.id);
   const sources = player?.currentSources?.() || [];
   return [player?.currentSrc?.(), ...sources.map(source => source.src)].filter(value => typeof value === 'string').slice(0, 10);
 }
@@ -45,7 +53,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => runWorkerTask('Start Li
   if (!url && context?.playerId) {
     try {
       const results = await chrome.scripting.executeScript({ target: {tabId: tab.id, frameIds: [0]}, world: 'MAIN', func: readLinkedInPlayer, args: [context.playerId] });
-      url = (results[0]?.result || []).map(canonicalLinkedInMedia).find(candidate => candidate && (!context.assetId || linkedInAssetId(candidate) === context.assetId)) || null;
+      url = (results[0]?.result || []).map(canonicalLinkedInMedia).find(Boolean) || null;
     } catch { /* A disposed player can still be matched by its poster below. */ }
   }
   if (!url && context?.assetId) url = linkedInStreams.get(tab.id)?.get(context.assetId) || null;

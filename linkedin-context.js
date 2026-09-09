@@ -1,6 +1,9 @@
 function findLinkedInVideo(target) {
   if (!(target instanceof Element)) return null;
-  const player = target.closest('[data-vjs-player], .video-js, [role="region"][aria-label="Video Player"], video');
+  // A comma-separated selector containing `video` chooses the inner <video>
+  // first when the picture itself is clicked. Its blob URL has no source or
+  // poster metadata, so prefer the enclosing player before a standalone video.
+  const player = target.closest('[data-vjs-player], .video-js, [role="region"][aria-label="Video Player"]') || target.closest('video');
   if (!player) return null;
   const video = player.matches('video') ? player : player.querySelector('video');
   const poster = video?.poster || player.querySelector('.vjs-poster img')?.src || '';

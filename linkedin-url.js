@@ -11,7 +11,7 @@ function linkedInAssetId(value) {
   try {
     const url = new URL(value);
     if (!['media.licdn.com', 'dms.licdn.com'].includes(url.hostname)) return null;
-    return url.pathname.match(/\/(?:dms\/(?:image|video)|playlist\/vid|video\/vid)\/(?:v2\/)?([A-Za-z0-9_-]+)\//)?.[1] || null;
+    return url.pathname.match(/\/(?:dms\/(?:image|video)|playlist\/vid|video\/vid)\/(?:(?:v2|dash)\/)?([A-Za-z0-9_-]+)\//)?.[1] || null;
   } catch { return null; }
 }
 
