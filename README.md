@@ -5,10 +5,10 @@
 
 # Blob Video Downloader
 
-### Right-click downloads for X and LinkedIn
+### Right-click downloads for X, LinkedIn and YouTube
 
 On macOS with Chrome, this fork can download a complete MP4 by right-clicking an
-X or LinkedIn video and selecting **Download this video**. It uses a local yt-dlp/ffmpeg
+X, LinkedIn or YouTube video and selecting **Download this video**. It uses a local yt-dlp/ffmpeg
 helper to select the video and combine audio when needed. See the
 [one-time setup instructions](native/README.md).
 

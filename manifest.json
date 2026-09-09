@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Blob Video Downloader",
-  "version": "1.2.2",
+  "version": "1.3.0",
   "description": "Sniff and download video streams (MP4, HLS, m3u8 blob) on the current page.",
   "permissions": [
     "activeTab",
@@ -42,6 +42,20 @@
       "js": [
         "linkedin-url.js",
         "linkedin-context.js",
+        "x-progress.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://youtube.com/*",
+        "https://www.youtube.com/*",
+        "https://m.youtube.com/*",
+        "https://youtu.be/*"
+      ],
+      "js": [
+        "youtube-url.js",
+        "youtube-context.js",
         "x-progress.js"
       ],
       "run_at": "document_start"

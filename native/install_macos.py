@@ -33,7 +33,8 @@ def install(extension_id):
     manifests.mkdir(parents=True, exist_ok=True)
     for name in ('host.py', 'save_dialog.js'):
         shutil.copy2(Path(__file__).with_name(name), folder / name)
-    config = {'extension_id': extension_id, 'yt_dlp': ytdlp, 'ffmpeg': ffmpeg,
+    old_config = json.loads((folder / 'config.json').read_text()) if (folder / 'config.json').exists() else {}
+    config = {**{key: old_config[key] for key in ('youtube_yt_dlp', 'youtube_node') if key in old_config}, 'extension_id': extension_id, 'yt_dlp': ytdlp, 'ffmpeg': ffmpeg,
               'download_dir': str(Path.home() / 'Downloads')}
     (folder / 'config.json').write_text(json.dumps(config, indent=2) + '\n')
     launcher = folder / 'launch.sh'
@@ -43,12 +44,12 @@ def install(extension_id):
                         + shlex.quote(sys.executable) + ' ' + shlex.quote(str(folder / 'host.py')) + ' "$@"\n')
     launcher.chmod(0o700)
     (folder / 'config.json').chmod(0o600)
-    manifest = {'name': HOST_NAME, 'description': 'Download X and LinkedIn videos with yt-dlp',
+    manifest = {'name': HOST_NAME, 'description': 'Download X, LinkedIn and YouTube videos with yt-dlp',
                 'path': str(launcher), 'type': 'stdio', 'allowed_origins': [allowed_origin]}
     manifest_path.write_text(json.dumps(manifest, indent=2) + '\n')
     print(f'Helper installed for extension {extension_id}.')
     print(f'Save dialog default folder: {config["download_dir"]}')
-    print('Reload the extension in Chrome, then refresh your X and LinkedIn tabs.')
+    print('Reload the extension in Chrome, then refresh your video tabs.')
 
 
 if __name__ == '__main__':

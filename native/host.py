@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Restricted Chrome native host for downloading X posts and LinkedIn video streams."""
+"""Restricted Chrome native host for downloading X posts, LinkedIn streams and YouTube videos."""
 import json
 import os
 from pathlib import Path
@@ -12,7 +12,7 @@ import sys
 import tempfile
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
 import uuid
 
 MAX_MESSAGE = 8192
@@ -32,15 +32,34 @@ def canonical_tweet_url(value):
     return f'https://x.com/i/status/{match[1]}' + (f'/video/{match[2]}' if match[2] else '')
 
 
+def canonical_youtube_url(value):
+    url = urlsplit(value)
+    if (url.scheme != 'https' or url.hostname not in ('youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be')
+            or url.username or url.password or url.port not in (None, 443)):
+        raise ValueError('Please choose an HTTPS YouTube video link.')
+    if url.hostname == 'youtu.be':
+        video_id = url.path[1:]
+    elif url.path == '/watch':
+        video_id = parse_qs(url.query).get('v', [''])[0]
+    else:
+        match = re.fullmatch(r'/(?:shorts|live|embed)/([A-Za-z0-9_-]{11})/?', url.path)
+        video_id = match[1] if match else ''
+    if not re.fullmatch(r'[A-Za-z0-9_-]{11}', video_id):
+        raise ValueError('Please choose one YouTube video, not a channel or playlist.')
+    return 'https://www.youtube.com/watch?v=' + video_id
+
+
 def canonical_download_url(value):
     if not isinstance(value, str) or len(value) > 7000:
         raise ValueError('Please choose a valid video.')
     url = urlsplit(value)
+    if url.hostname in ('youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be'):
+        return canonical_youtube_url(value)
     if url.hostname in ('x.com', 'www.x.com', 'twitter.com', 'www.twitter.com'):
         return canonical_tweet_url(value)
     if (url.scheme != 'https' or url.hostname not in ('media.licdn.com', 'dms.licdn.com')
             or url.username or url.password or url.port not in (None, 443)):
-        raise ValueError('Only X posts and LinkedIn media links are supported.')
+        raise ValueError('Only X posts, LinkedIn media and YouTube videos are supported.')
     playlist = re.match(r'/playlist/vid/(?:v2/)?[A-Za-z0-9_-]+/', url.path)
     video = re.match(r'/dms/video/(?:v2/)?[A-Za-z0-9_-]+/', url.path) and url.path.lower().endswith('.mp4')
     if (not (playlist or video) or re.search(r'\.(?:m4s|ts|aac|m4a)$', url.path, re.I)
@@ -55,6 +74,8 @@ def video_stem(url):
     url = canonical_download_url(url)
     if urlsplit(url).hostname in ('x.com', 'www.x.com', 'twitter.com', 'www.twitter.com'):
         return 'X-' + url.split('/status/')[1].split('/')[0]
+    if urlsplit(url).hostname == 'www.youtube.com':
+        return 'YouTube-' + parse_qs(urlsplit(url).query)['v'][0]
     asset = re.search(r'/(?:dms/video|playlist/vid)/(?:v2/)?([A-Za-z0-9_-]+)/', urlsplit(url).path)[1]
     return 'LinkedIn-' + asset[:100]
 
@@ -92,11 +113,21 @@ def build_command(config, url, output_dir, token):
     stem = video_stem(url)
     # No shell, website-selected filenames, cookies, user config, or plugins.
     # Prefer a complete MP4; merge separate MP4/audio streams when necessary.
-    return [config['yt_dlp'], '--ignore-config', '--no-playlist',
+    executable = config['yt_dlp']
+    runtime = []
+    format_selector = 'b[ext=mp4]/bv[ext=mp4]+ba[ext=m4a]/b'
+    if urlsplit(url).hostname == 'www.youtube.com':
+        if not config.get('youtube_yt_dlp') or not config.get('youtube_node'):
+            raise ValueError('YouTube setup is missing. Run native/install_youtube.py once to enable it.')
+        executable = config['youtube_yt_dlp']
+        runtime = ['--js-runtimes', 'node:' + config['youtube_node']]
+        # Prefer H.264 and AAC so the saved MP4 plays in macOS video apps.
+        format_selector = 'bv[vcodec^=avc1][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv[ext=mp4]+ba[ext=m4a]/b'
+    return [executable, *runtime, '--ignore-config', '--no-playlist',
             '--no-colors', '--newline', '--progress', '--socket-timeout', '30',
             '--retries', '3', '--fragment-retries', '3', '--no-overwrites',
             '--restrict-filenames', '--ffmpeg-location', config['ffmpeg'],
-            '-f', 'b[ext=mp4]/bv[ext=mp4]+ba[ext=m4a]/b',
+            '-f', format_selector,
             '--merge-output-format', 'mp4', '--remux-video', 'mp4',
             '--progress-template', 'download:__BVD_PROGRESS__%(progress._percent_str)s',
             '--print', 'after_move:__BVD_FILE__%(filepath)s',

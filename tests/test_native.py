@@ -150,6 +150,21 @@ class NativeTests(unittest.TestCase):
             with self.subTest(url=invalid), self.assertRaises(ValueError):
                 host.canonical_download_url(invalid)
 
+    def test_youtube_canonical_url_and_isolated_runtime(self):
+        expected = 'https://www.youtube.com/watch?v=yuOD_8ichQc'
+        for url in [expected+'&t=26s&list=PLtest', 'https://youtu.be/yuOD_8ichQc', 'https://youtube.com/shorts/yuOD_8ichQc']:
+            self.assertEqual(host.canonical_download_url(url), expected)
+        self.assertEqual(host.video_stem(expected), 'YouTube-yuOD_8ichQc')
+        config = {'yt_dlp':'/old/yt-dlp','ffmpeg':'/tools/ffmpeg','youtube_yt_dlp':'/new/yt-dlp','youtube_node':'/tools/node'}
+        command = host.build_command(config, expected, Path('/videos'), 'abc')
+        self.assertEqual(command[0], '/new/yt-dlp')
+        self.assertIn('node:/tools/node', command)
+        self.assertIn('--no-playlist',command)
+        self.assertNotIn('--cookies-from-browser',command)
+        self.assertEqual(host.build_command(config,'https://x.com/u/status/123',Path('/videos'),'abc')[0], '/old/yt-dlp')
+        for url in ['https://youtube.com.evil.test/watch?v=yuOD_8ichQc','https://user@youtube.com/watch?v=yuOD_8ichQc','https://youtube.com/playlist?list=test','https://youtube.com/watch?v=bad']:
+            with self.assertRaises(ValueError): host.canonical_download_url(url)
+
 
 if __name__ == '__main__':
     unittest.main()

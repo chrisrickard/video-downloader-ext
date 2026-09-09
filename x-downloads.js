@@ -111,7 +111,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   // Progress/cancel messages come from our isolated content script. Scope them
   // to the sender's tab; page scripts have no direct native-download interface.
-  const ownXTab = sender.tab && sender.frameId === 0 && (isXPage(sender.url) || isLinkedInPage(sender.url));
+  const ownXTab = sender.tab && sender.frameId === 0 && (isXPage(sender.url) || isLinkedInPage(sender.url) || isYouTubePage(sender.url));
   if (message.action === 'getXDownloads' && ownXTab) {
     sendResponse({ jobs: [...xJobs.values()].filter(job => !job.settled && job.record.tabId === sender.tab.id).map(job => ({ ...job.record })) });
   }

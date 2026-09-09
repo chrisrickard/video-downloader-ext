@@ -170,7 +170,7 @@ test('reload during menu registration and refresh badge updates is handled', asy
   const app = setup();
   app.chrome.runtime.lastError = {message: 'No SW'};
   app.chrome.runtime.onInstalled.listeners[0]();
-  assert.equal(app.menus.length, 2);
+  assert.equal(app.menus.length, 3);
   delete app.chrome.runtime.lastError;
   const stopped = async () => { throw new Error('No SW'); };
   app.chrome.scripting.executeScript = stopped;
@@ -267,14 +267,42 @@ test('the clicked player source is authoritative even when its manifest and post
 
 test('download menus survive worker wakes and recover missing registrations without deletion', () => {
   const app = setup();
-  assert.equal(app.menus.length,2);
+  assert.equal(app.menus.length,3);
   app.chrome.contextMenus.removeAll = () => { throw new Error('Must not delete existing menus'); };
   app.chrome.runtime.onStartup.listeners[0]();
   app.chrome.runtime.onInstalled.listeners[0]();
-  assert.equal(app.menus.length,2);
+  assert.equal(app.menus.length,3);
   app.menus.splice(app.menus.findIndex(menu => menu.id === 'download-linkedin-video'),1);
   app.scope.ensureDownloadMenus();
-  assert.equal(app.menus.length,2);
+  assert.equal(app.menus.length,3);
   assert(app.menus.some(menu => menu.id === 'download-linkedin-video'));
   assert.deepEqual(app.errors,[]);
+});
+
+
+test('YouTube watch, Shorts and short links select one video and strip playlist and timestamp', () => {
+  const app = setup();
+  for (const url of ['https://www.youtube.com/watch?v=yuOD_8ichQc&t=26s&list=PLtest', 'https://youtu.be/yuOD_8ichQc', 'https://www.youtube.com/shorts/yuOD_8ichQc'])
+    assert.equal(app.scope.canonicalYouTubeUrl(url), 'https://www.youtube.com/watch?v=yuOD_8ichQc');
+  for (const url of ['https://youtube.com.evil.test/watch?v=yuOD_8ichQc', 'https://user@youtube.com/watch?v=yuOD_8ichQc', 'https://youtube.com/playlist?list=PLtest', 'https://youtube.com/watch?v=bad'])
+    assert.equal(app.scope.canonicalYouTubeUrl(url), null);
+});
+
+test('YouTube menu starts a download and scopes progress and cancellation to its tab', async () => {
+  const app = setup();
+  const page = 'https://www.youtube.com/watch?v=yuOD_8ichQc&t=26s';
+  await app.click({menuItemId:'download-youtube-video'}, {id:10, url:page});
+  assert.equal(app.ports[0].sent[0].url, 'https://www.youtube.com/watch?v=yuOD_8ichQc');
+  assert.equal(app.tabs.length,0);
+  const sender={tab:{id:10},frameId:0,url:page};
+  await app.message({action:'getXDownloads'},sender);
+  const job=app.replies.at(-1).jobs[0];
+  await app.message({action:'cancelXDownload',jobId:job.id},sender);
+  assert.equal(app.ports[0].sent.at(-1).action,'cancel');
+});
+
+test('a clicked YouTube recommendation is selected instead of the currently playing video', async () => {
+  const app=setup();
+  await app.click({menuItemId:'download-youtube-video',linkUrl:'https://www.youtube.com/watch?v=BaW_jenozKc'}, {id:10,url:'https://www.youtube.com/watch?v=yuOD_8ichQc'});
+  assert.equal(app.ports[0].sent[0].url,'https://www.youtube.com/watch?v=BaW_jenozKc');
 });

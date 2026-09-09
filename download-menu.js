@@ -1,5 +1,6 @@
 const downloadMenuDefinitions = [
   {id: 'download-x-video', title: 'Download this video', contexts: ['all'], documentUrlPatterns: ['https://x.com/*', 'https://www.x.com/*', 'https://twitter.com/*', 'https://www.twitter.com/*']},
+  {id: 'download-youtube-video', title: 'Download this video', contexts: ['all'], documentUrlPatterns: ['https://youtube.com/*', 'https://www.youtube.com/*', 'https://m.youtube.com/*', 'https://youtu.be/*']},
   {id: 'download-linkedin-video', title: 'Download this video', contexts: ['all'], documentUrlPatterns: ['https://linkedin.com/*', 'https://www.linkedin.com/*']}
 ];
 const pendingMenus = new Set();

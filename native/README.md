@@ -1,6 +1,6 @@
-# Right-click downloads on X and LinkedIn (macOS + Chrome)
+# Right-click downloads on X, LinkedIn and YouTube (macOS + Chrome)
 
-Right-click a video in an X or LinkedIn post and select **Download this video**. A small
+Right-click a video in an X or LinkedIn post, or on a YouTube video and select **Download this video**. A small
 progress panel appears at the bottom-right of the page, and a macOS Save dialog
 lets you choose a filename and folder before downloading. Downloads is the
 default folder. The panel disappears 3.5 seconds after completion. Errors stay visible until dismissed. No new tab opens.
@@ -20,6 +20,11 @@ It never chooses an unrelated video from other posts in the tab. No browser
 cookies are exported. LinkedIn Learning and externally embedded players are not
 supported by this feature.
 
+On YouTube, the menu downloads the whole current video or Short. A timestamp
+in the link is ignored, and playlists are never downloaded. You can also use it
+on a video thumbnail link. Private or sign-in-restricted videos may fail; the
+helper does not copy browser cookies.
+
 ## One-time setup
 
 1. Install `yt-dlp` and `ffmpeg` if they are not already available. Homebrew users
@@ -35,6 +40,10 @@ supported by this feature.
 4. Reload the extension at `chrome://extensions` and accept Chrome's updated
    permission prompt if shown. Refresh any X or LinkedIn tabs that were already open.
 
+For YouTube, install Node.js 22 or newer, then run `python3 native/install_youtube.py`.
+This adds an isolated current yt-dlp and matching EJS package for YouTube. The
+existing downloader for X and LinkedIn is kept. Rerun it to update YouTube support.
+
 The added permissions are `contextMenus` (the right-click item) and
 `nativeMessaging` (the local downloader). The installer registers only the
 extension ID you supply. It does not install an extension or change Chrome's
@@ -43,7 +52,7 @@ extension settings itself.
 ## What the helper does
 
 - Chrome launches the helper on demand; no server or listening network port runs.
-- Only HTTPS X/Twitter post URLs and LinkedIn media URLs on `dms.licdn.com`
+- Only HTTPS X/Twitter post URLs, individual YouTube video links, and LinkedIn media URLs on `dms.licdn.com`
   or `media.licdn.com` are accepted. Signed LinkedIn queries are preserved;
   tracking queries are removed from X post links.
 - The helper executes a fixed yt-dlp argument list without a shell. It ignores
