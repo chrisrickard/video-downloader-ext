@@ -3,20 +3,6 @@ const X_MENU = 'download-x-video';
 const xJobs = new Map();
 const xPatterns = ['https://x.com/*', 'https://www.x.com/*', 'https://twitter.com/*', 'https://www.twitter.com/*'];
 
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.removeAll(() => {
-    if (chrome.runtime.lastError) {
-      reportWorkerError('Reset X download menu', chrome.runtime.lastError);
-      return;
-    }
-    chrome.contextMenus.create({ id: LI_MENU, title: 'Download this video', contexts: ['all'], documentUrlPatterns: ['https://linkedin.com/*', 'https://www.linkedin.com/*'] }, () => {
-      if (chrome.runtime.lastError) reportWorkerError('Create LinkedIn download menu', chrome.runtime.lastError);
-    });
-    chrome.contextMenus.create({ id: X_MENU, title: 'Download this video', contexts: ['all'], documentUrlPatterns: xPatterns }, () => {
-      if (chrome.runtime.lastError) reportWorkerError('Create X download menu', chrome.runtime.lastError);
-    });
-  });
-});
 
 function isXPage(value) {
   try {

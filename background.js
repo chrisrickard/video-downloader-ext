@@ -1,4 +1,4 @@
-importScripts('worker-api.js', 'x-url.js', 'linkedin-url.js', 'x-downloads.js', 'linkedin-downloads.js');
+importScripts('worker-api.js', 'download-menu.js', 'x-url.js', 'linkedin-url.js', 'x-downloads.js', 'linkedin-downloads.js');
 
 // Store detected video URLs by tab ID
 // Structure: { [tabId]: [ { url: string, type: string, filename: string, title: string, detectedAt: number }, ... ] }

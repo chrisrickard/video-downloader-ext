@@ -9,9 +9,15 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 function setup() {
   const data = {}, tabs = [], ports = [], menus = [], deliveries = [], replies = [], errors = [];
   const chrome = {
-    runtime: { id: 'a'.repeat(32), onInstalled: event(), onMessage: event(), getURL: p => 'chrome-extension://' + 'a'.repeat(32) + '/' + p,
+    runtime: { id: 'a'.repeat(32), onInstalled: event(), onStartup: event(), onMessage: event(), getURL: p => 'chrome-extension://' + 'a'.repeat(32) + '/' + p,
       connectNative(name) { const port = { name, onMessage: event(), onDisconnect: event(), sent: [], disconnected: false, postMessage(m) { this.sent.push(m); }, disconnect() { this.disconnected = true; } }; ports.push(port); return port; } },
-    contextMenus: { onClicked: event(), removeAll(cb) { cb(); }, create(menu, cb) { menus.push(menu); cb?.(); } },
+    contextMenus: { onClicked: event(), update(id, properties, cb) {
+      if (chrome.runtime.lastError) { cb(); return; }
+      const menu = menus.find(item => item.id === id);
+      if (menu) { Object.assign(menu, properties); cb(); return; }
+      chrome.runtime.lastError = {message: 'Cannot find menu item with id ' + id};
+      cb(); delete chrome.runtime.lastError;
+    }, removeAll(cb) { cb(); }, create(menu, cb) { const prior = chrome.runtime.lastError; delete chrome.runtime.lastError; menus.push(menu); cb?.(); if (prior) chrome.runtime.lastError = prior; } },
     storage: { local: { async set() {}, async remove() {} }, session: { async get(key) { return { [key]: data[key] }; }, async set(values) { Object.assign(data, values); }, async remove(key) { delete data[key]; } } },
     tabs: { onRemoved: event(), async create(tab) { tabs.push(tab); }, async sendMessage(tabId, message, options) { deliveries.push({tabId, message, options}); } },
     scripting: { async executeScript() {} },
@@ -164,7 +170,7 @@ test('reload during menu registration and refresh badge updates is handled', asy
   const app = setup();
   app.chrome.runtime.lastError = {message: 'No SW'};
   app.chrome.runtime.onInstalled.listeners[0]();
-  assert.equal(app.menus.length, 0);
+  assert.equal(app.menus.length, 2);
   delete app.chrome.runtime.lastError;
   const stopped = async () => { throw new Error('No SW'); };
   app.chrome.scripting.executeScript = stopped;
@@ -256,4 +262,19 @@ test('the clicked player source is authoritative even when its manifest and post
   app.chrome.scripting.executeScript = async options => options.world === 'MAIN' ? [{result:[dash]}] : [];
   await liClick(app);
   assert.equal(app.ports[0].sent[0].url,dash);
+});
+
+
+test('download menus survive worker wakes and recover missing registrations without deletion', () => {
+  const app = setup();
+  assert.equal(app.menus.length,2);
+  app.chrome.contextMenus.removeAll = () => { throw new Error('Must not delete existing menus'); };
+  app.chrome.runtime.onStartup.listeners[0]();
+  app.chrome.runtime.onInstalled.listeners[0]();
+  assert.equal(app.menus.length,2);
+  app.menus.splice(app.menus.findIndex(menu => menu.id === 'download-linkedin-video'),1);
+  app.scope.ensureDownloadMenus();
+  assert.equal(app.menus.length,2);
+  assert(app.menus.some(menu => menu.id === 'download-linkedin-video'));
+  assert.deepEqual(app.errors,[]);
 });
