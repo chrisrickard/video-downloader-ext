@@ -1,9 +1,13 @@
 # Right-click downloads on X (macOS + Chrome)
 
-Right-click a video in an X post and select **Download this video**. A progress
-tab opens, and the complete MP4 is saved in your Downloads folder. The download
-continues if you close the progress tab; keep Chrome running until it finishes.
-Use **Cancel download** on the progress page to stop it.
+Right-click a video in an X post and select **Download this video**. A small
+progress panel appears at the bottom-right of the page. The complete MP4 is
+saved in your Downloads folder, and the panel disappears 3.5 seconds after
+completion. Errors stay visible until dismissed. No new tab opens.
+
+Use **Cancel download** to stop it. Dismissing the panel or navigating away keeps
+the download running; keep Chrome open until it finishes. Refreshing X restores
+the panel for downloads that are still active in that tab.
 
 The menu also works on a post's timestamp link. On timelines and replies it
 uses the post you clicked, rather than the current tab's main post. For posts

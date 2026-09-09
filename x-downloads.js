@@ -19,16 +19,19 @@ function isXPage(value) {
 function saveXJob(job, patch) {
   Object.assign(job.record, patch);
   const snapshot = { ...job.record };
-  job.writes = job.writes.then(() => chrome.storage.session.set({ [`x_job_${snapshot.id}`]: snapshot }));
+  job.writes = job.writes.then(async () => {
+    await chrome.storage.session.set({ [`x_job_${snapshot.id}`]: snapshot });
+    // The page may have been closed or navigated away. Delivery failure must
+    // not interrupt a download that is already running in the background.
+    await chrome.tabs.sendMessage(snapshot.tabId, { action: 'xDownloadProgress', job: snapshot }, { frameId: 0 }).catch(() => {});
+  });
   return job.writes;
 }
 
-async function startXDownload(url) {
+async function startXDownload(url, tabId) {
   const id = crypto.randomUUID();
-  const job = { record: { id, url, status: 'connecting', message: 'Connecting to the downloader…', percent: null }, writes: Promise.resolve(), port: null, settled: false };
+  const job = { record: { id, tabId, url, status: 'connecting', message: 'Connecting to the downloader…', percent: null }, writes: Promise.resolve(), port: null, settled: false, cancelRequested: false };
   xJobs.set(id, job);
-  await saveXJob(job, {});
-  await chrome.tabs.create({ url: chrome.runtime.getURL(`download.html?job=${encodeURIComponent(id)}`) });
 
   const finish = async (patch) => {
     if (job.settled) return;
@@ -37,6 +40,21 @@ async function startXDownload(url) {
     job.port?.disconnect();
     xJobs.delete(id);
   };
+  try {
+    // Content scripts on existing pages may not be present after an extension
+    // reload. The panel script is idempotent, so it is safe to ensure it here.
+    await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: ['x-progress.js'] });
+  } catch {
+    await finish({ status: 'error', message: 'Refresh X and try again so the download panel can open.' });
+    await chrome.action.setBadgeText({ tabId, text: '!' });
+    await chrome.action.setTitle({ tabId, title: 'Refresh X and try the video download again.' });
+    return;
+  }
+  await saveXJob(job, {});
+  if (job.cancelRequested) {
+    await finish({ status: 'cancelled', message: 'Download cancelled.' });
+    return;
+  }
   if (!url) {
     await finish({ status: 'error', message: 'Right-click a video inside an X post, or use this option on a post’s timestamp link. Refresh X if you just reloaded the extension.' });
     return;
@@ -46,8 +64,8 @@ async function startXDownload(url) {
     return;
   }
   try {
-    // The background worker owns the port, so closing the progress tab does not
-    // stop a download. Chrome keeps the worker alive while this port is open.
+    // The background worker owns the port, so dismissing the in-page panel or
+    // navigating away does not stop a download. Keep Chrome running to finish.
     job.port = chrome.runtime.connectNative(X_HOST);
     job.port.onMessage.addListener(message => {
       if (job.settled) return;
@@ -78,7 +96,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // main post when the clicked reply could not be identified.
   const recent = stored && Date.now() - stored.at < 120000 && stored.pageUrl === (info.pageUrl || tab.url);
   const url = canonicalTweetUrl(info.linkUrl) || (recent ? canonicalTweetUrl(stored.url) : canonicalTweetUrl(info.pageUrl || tab.url));
-  await startXDownload(url);
+  await startXDownload(url, tab.id);
 });
 
 chrome.tabs.onRemoved.addListener(tabId => { void chrome.storage.session.remove(`x_context_${tabId}`); });
@@ -88,12 +106,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.storage.session.set({ [`x_context_${sender.tab.id}`]: { url: canonicalTweetUrl(message.url), at: Date.now(), pageUrl: sender.url } }).then(() => sendResponse({ ok: true }));
     return true;
   }
-  // Websites can provide context but cannot start or cancel native downloads.
-  // Only our own progress page can send this control message.
-  if (message.action === 'cancelXDownload' && sender.url?.split('?')[0] === chrome.runtime.getURL('download.html')) {
+  // Progress/cancel messages come from our isolated content script. Scope them
+  // to the sender's tab; page scripts have no direct native-download interface.
+  const ownXTab = sender.tab && sender.frameId === 0 && isXPage(sender.url);
+  if (message.action === 'getXDownloads' && ownXTab) {
+    sendResponse({ jobs: [...xJobs.values()].filter(job => !job.settled && job.record.tabId === sender.tab.id).map(job => ({ ...job.record })) });
+  }
+  if (message.action === 'cancelXDownload' && ownXTab) {
     const job = xJobs.get(message.jobId);
-    if (job?.port && !job.settled) job.port.postMessage({ action: 'cancel' });
-    sendResponse({ ok: Boolean(job) });
+    const allowed = job?.record.tabId === sender.tab.id && !job.settled;
+    if (allowed) {
+      job.cancelRequested = true;
+      job.port?.postMessage({ action: 'cancel' });
+    }
+    sendResponse({ ok: Boolean(allowed) });
   }
   return false;
 });

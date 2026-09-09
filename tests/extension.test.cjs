@@ -7,17 +7,19 @@ const crypto = require('node:crypto');
 const event = () => ({ listeners: [], addListener(fn) { this.listeners.push(fn); } });
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function setup() {
-  const data = {}, tabs = [], ports = [], menus = [];
+  const data = {}, tabs = [], ports = [], menus = [], deliveries = [], replies = [];
   const chrome = {
     runtime: { id: 'a'.repeat(32), onInstalled: event(), onMessage: event(), getURL: p => 'chrome-extension://' + 'a'.repeat(32) + '/' + p,
       connectNative(name) { const port = { name, onMessage: event(), onDisconnect: event(), sent: [], disconnected: false, postMessage(m) { this.sent.push(m); }, disconnect() { this.disconnected = true; } }; ports.push(port); return port; } },
     contextMenus: { onClicked: event(), removeAll(cb) { cb(); }, create(menu) { menus.push(menu); } },
     storage: { session: { async get(key) { return { [key]: data[key] }; }, async set(values) { Object.assign(data, values); }, async remove(key) { delete data[key]; } } },
-    tabs: { onRemoved: event(), async create(tab) { tabs.push(tab); } }
+    tabs: { onRemoved: event(), async create(tab) { tabs.push(tab); }, async sendMessage(tabId, message, options) { deliveries.push({tabId, message, options}); } },
+    scripting: { async executeScript() {} },
+    action: { async setBadgeText() {}, async setTitle() {} }
   };
   const scope = vm.createContext({ chrome, URL, crypto, console });
   for (const file of ['x-url.js', 'x-downloads.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), scope);
-  return { scope, chrome, data, tabs, ports, menus, async click(info = {}, tab = {id: 10, url: 'https://x.com/u/status/123'}) { await chrome.contextMenus.onClicked.listeners[0]({ menuItemId: 'download-x-video', pageUrl: tab.url, ...info }, tab); }, async message(msg, sender) { for (const fn of chrome.runtime.onMessage.listeners) fn(msg, sender, () => {}); await tick(); } };
+  return { scope, chrome, data, tabs, ports, menus, deliveries, replies, async click(info = {}, tab = {id: 10, url: 'https://x.com/u/status/123'}) { await chrome.contextMenus.onClicked.listeners[0]({ menuItemId: 'download-x-video', pageUrl: tab.url, ...info }, tab); }, async message(msg, sender) { for (const fn of chrome.runtime.onMessage.listeners) fn(msg, sender, reply => replies.push(reply)); await tick(); } };
 }
 
 test('only canonical X post links are accepted', () => {
@@ -31,7 +33,9 @@ test('menu is restricted to X and a real menu click starts a download', async ()
   assert(app.menus[0].documentUrlPatterns.every(url => url.startsWith('https://')));
   await app.click();
   assert.equal(app.ports[0].sent[0].url, 'https://x.com/i/status/123');
-  assert.match(app.tabs[0].url, /download.html\?job=/);
+  assert.equal(app.tabs.length, 0);
+  assert.equal(app.deliveries[0].tabId, 10);
+  assert.equal(app.deliveries[0].message.action, 'xDownloadProgress');
 });
 
 test('clicked reply wins over the main post and remembers the video index', async () => {
@@ -49,7 +53,7 @@ test('unresolved recent context never silently selects the main post', async () 
   assert.equal(Object.values(app.data).find(x => x.status)?.status, 'error');
 });
 
-test('webpages cannot start or cancel native downloads', async () => {
+test('only the content script in the owning X tab can cancel a download', async () => {
   const app = setup();
   await app.message({ action: 'startXDownload', url: 'https://x.com/u/status/123' }, { tab: {id: 10}, url: 'https://x.com/' });
   assert.equal(app.ports.length, 0);
@@ -57,11 +61,11 @@ test('webpages cannot start or cancel native downloads', async () => {
   const job = Object.values(app.data).find(x => x.id);
   await app.message({ action: 'cancelXDownload', jobId: job.id }, { tab: {id: 10}, url: 'https://x.com/' });
   assert.equal(app.ports[0].sent.length, 1);
-  await app.message({ action: 'cancelXDownload', jobId: job.id }, { url: app.chrome.runtime.getURL('download.html?job=' + job.id) });
+  await app.message({ action: 'cancelXDownload', jobId: job.id }, { tab: {id: 10}, frameId: 0, url: 'https://x.com/u/status/123' });
   assert.equal(app.ports[0].sent[1].action, 'cancel');
 });
 
-test('progress, completion and helper failures reach the status page', async () => {
+test('progress, completion and helper failures reach the in-page panel', async () => {
   const app = setup(); await app.click();
   const port = app.ports[0];
   port.onMessage.listeners[0]({status: 'progress', percent: 42, message: 'Downloading'}); await tick();
@@ -79,4 +83,35 @@ test('at most two native downloads can run at once', async () => {
   const app = setup(); await app.click(); await app.click(); await app.click();
   assert.equal(app.ports.length, 2);
   assert(Object.values(app.data).some(job => /Two downloads/.test(job.message)));
+});
+
+
+test('another tab cannot read or cancel the current tab download', async () => {
+  const app = setup(); await app.click();
+  const job = Object.values(app.data).find(x => x.id);
+  await app.message({action: 'getXDownloads'}, {tab: {id: 11}, frameId: 0, url: 'https://x.com/home'});
+  assert.equal(app.replies.at(-1).jobs.length, 0);
+  await app.message({action: 'cancelXDownload', jobId: job.id}, {tab: {id: 11}, frameId: 0, url: 'https://x.com/home'});
+  assert.equal(app.replies.at(-1).ok, false);
+  assert.equal(app.ports[0].sent.length, 1);
+  await app.message({action: 'getXDownloads'}, {tab: {id: 10}, frameId: 0, url: 'https://x.com/home'});
+  assert.equal(app.replies.at(-1).jobs[0].id, job.id);
+});
+
+test('closing or navigating away from the page does not interrupt native download', async () => {
+  const app = setup(); await app.click();
+  app.chrome.tabs.sendMessage = async () => { throw new Error('No receiver'); };
+  app.ports[0].onMessage.listeners[0]({status: 'complete', filename: 'X-123.mp4'});
+  await tick();
+  assert.equal(Object.values(app.data)[0].status, 'complete');
+  assert.equal(app.ports[0].disconnected, true);
+  assert.equal(app.tabs.length, 0);
+});
+
+test('failure to inject the panel does not start an invisible download', async () => {
+  const app = setup();
+  app.chrome.scripting.executeScript = async () => { throw new Error('Permission withheld'); };
+  await app.click();
+  assert.equal(app.ports.length, 0);
+  assert.equal(Object.values(app.data)[0].status, 'error');
 });
