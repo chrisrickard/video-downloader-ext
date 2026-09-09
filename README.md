@@ -5,6 +5,13 @@
 
 # Blob Video Downloader
 
+### Right-click downloads for X
+
+On macOS with Chrome, this fork can download a complete MP4 by right-clicking an
+X video and selecting **Download this video**. It uses a local yt-dlp/ffmpeg
+helper to select the video and combine audio when needed. See the
+[one-time setup instructions](native/README.md).
+
 <h3>A high-performance, elegant, and secure browser extension to sniff and download video streams locally.</h3>
 
 <!-- Badges -->

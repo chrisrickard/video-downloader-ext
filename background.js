@@ -1,3 +1,5 @@
+importScripts('x-url.js', 'x-downloads.js');
+
 // Store detected video URLs by tab ID
 // Structure: { [tabId]: [ { url: string, type: string, filename: string, title: string, detectedAt: number }, ... ] }
 const detectedVideos = {};
@@ -153,5 +155,5 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     updateBadge(tabId);
     sendResponse({ success: true });
   }
-  return true; // Keep message channel open for async response
+  return false; // These replies are synchronous; other features have their own listeners.
 });

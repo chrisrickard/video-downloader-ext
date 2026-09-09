@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Video download</title>
+  <link rel="stylesheet" href="download.css">
+</head>
+<body>
+  <main>
+    <p class="eyebrow">BLOB VIDEO DOWNLOADER</p>
+    <h1 id="heading">Downloading your video</h1>
+    <p id="status" role="status" aria-live="polite">Connecting…</p>
+    <progress id="progress" max="100" aria-label="Download progress"></progress>
+    <p id="filename"></p>
+    <p id="hint">The complete MP4 will be saved to your Downloads folder. You can close this tab while it downloads.</p>
+    <button id="cancel" type="button">Cancel download</button>
+  </main>
+  <script src="download.js"></script>
+</body>
+</html>
