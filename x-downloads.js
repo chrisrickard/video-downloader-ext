@@ -70,7 +70,7 @@ async function startXDownload(url, tabId) {
     job.port.onMessage.addListener(message => {
       if (job.settled) return;
       if (message.status === 'complete') {
-        void finish({ status: 'complete', message: 'Saved to Downloads', filename: String(message.filename || ''), percent: 100 });
+        void finish({ status: 'complete', message: 'Saved to your chosen folder', filename: String(message.filename || ''), percent: 100 });
       } else if (message.status === 'error' || message.status === 'cancelled') {
         void finish({ status: message.status, message: String(message.message || 'Download stopped.') });
       } else if (message.status === 'progress') {

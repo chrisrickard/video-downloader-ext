@@ -31,7 +31,8 @@ def install(extension_id):
             raise SystemExit('A helper is registered to a different extension. Remove that registration before changing IDs.')
     folder.mkdir(parents=True, exist_ok=True)
     manifests.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(Path(__file__).with_name('host.py'), folder / 'host.py')
+    for name in ('host.py', 'save_dialog.js'):
+        shutil.copy2(Path(__file__).with_name(name), folder / name)
     config = {'extension_id': extension_id, 'yt_dlp': ytdlp, 'ffmpeg': ffmpeg,
               'download_dir': str(Path.home() / 'Downloads')}
     (folder / 'config.json').write_text(json.dumps(config, indent=2) + '\n')
@@ -46,7 +47,7 @@ def install(extension_id):
                 'path': str(launcher), 'type': 'stdio', 'allowed_origins': [allowed_origin]}
     manifest_path.write_text(json.dumps(manifest, indent=2) + '\n')
     print(f'Helper installed for extension {extension_id}.')
-    print(f'Downloads will be saved to: {config["download_dir"]}')
+    print(f'Save dialog default folder: {config["download_dir"]}')
     print('Reload the extension in Chrome, then refresh your X tabs.')
 
 

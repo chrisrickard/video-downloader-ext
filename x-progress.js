@@ -89,7 +89,7 @@
     item.terminal = done;
     item.card.dataset.status = job.status;
     item.heading.textContent = job.status === 'complete' ? 'Video saved' : job.status === 'error' ? 'Download couldn’t finish' : job.status === 'cancelled' ? 'Download cancelled' : 'Downloading video';
-    item.status.textContent = job.status === 'complete' ? 'Your MP4 is in Downloads.' : String(job.message || 'Downloading…');
+    item.status.textContent = job.status === 'complete' ? 'Your MP4 is saved in your chosen folder.' : String(job.message || 'Downloading…');
     item.filename.textContent = String(job.filename || '');
     item.filename.hidden = !job.filename;
     item.actions.hidden = done;

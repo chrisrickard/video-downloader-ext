@@ -73,7 +73,7 @@ def build_command(config, url, output_dir, token):
             '--merge-output-format', 'mp4', '--remux-video', 'mp4',
             '--progress-template', 'download:__BVD_PROGRESS__%(progress._percent_str)s',
             '--print', 'after_move:__BVD_FILE__%(filepath)s',
-            '-o', str(output_dir / f'X-{tweet_id}-{token}.%(ext)s'), '--', url]
+            '-o', str(output_dir).replace('%', '%%') + f'/X-{tweet_id}-{token}.%(ext)s', '--', url]
 
 
 def stop_process(process):
@@ -88,15 +88,73 @@ def stop_process(process):
             pass
 
 
+def choose_destination(config, url, cancelled):
+    tweet_id = canonical_tweet_url(url).split('/status/')[1].split('/')[0]
+    # Only the native Save dialog supplies this path. The extension and website
+    # cannot provide filesystem paths or code for the dialog to execute.
+    command = ['/usr/bin/osascript', '-l', 'JavaScript',
+               str(Path(__file__).with_name('save_dialog.js')),
+               f'X-{tweet_id}.mp4', config['download_dir']]
+    process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, text=True, start_new_session=True)
+    try:
+        while True:
+            if cancelled.is_set():
+                return None
+            try:
+                output, error = process.communicate(timeout=0.25)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        if process.returncode != 0:
+            raise ValueError('The Save dialog could not open. Please try again.')
+        result = json.loads(output)
+        if result.get('cancelled'):
+            return None
+        destination = Path(result['path'])
+        if not destination.is_absolute() or destination.suffix.lower() != '.mp4':
+            raise ValueError('Please save the video with an .mp4 filename.')
+        return destination.parent.resolve() / destination.name
+    finally:
+        stop_process(process)
+        process.stdout.close()
+        process.stderr.close()
+
+
+def file_state(path):
+    try:
+        stat = path.lstat()
+        return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+    except FileNotFoundError:
+        return None
+
+
+def publish_video(source, destination, selected_state):
+    # Keep an existing file intact throughout download/merge, even if cancelled.
+    # A replacement was confirmed in the native dialog. If the destination has
+    # since changed, leave it alone instead of overwriting another download.
+    if file_state(destination) != selected_state:
+        raise ValueError('The chosen file changed while downloading. Please try again with a different filename.')
+    os.replace(source, destination)
+
+
 def download(config, url, send, cancelled):
-    output_dir = Path(config['download_dir']).expanduser().resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
     token = uuid.uuid4().hex[:12]
-    command = build_command(config, url, output_dir, token)
     process = None
-    completed = False
+    staging = None
     final_path = None
     try:
+        send({'status': 'progress', 'message': 'Choose a filename and folder in the Save dialog…', 'percent': None})
+        destination = choose_destination(config, url, cancelled)
+        if destination is None or cancelled.is_set():
+            send({'status': 'cancelled', 'message': 'Download cancelled.'})
+            return
+        selected_state = file_state(destination)
+        # Stage on the destination filesystem so only a finished MP4 is moved to
+        # the chosen name. Failed downloads never replace the user's old file.
+        staging = tempfile.TemporaryDirectory(prefix='.blob-video-', dir=destination.parent)
+        output_dir = Path(staging.name).resolve()
+        command = build_command(config, url, output_dir, token)
         send({'status': 'progress', 'message': 'Finding the full video…', 'percent': None})
         with tempfile.TemporaryFile(mode='w+b') as error_log:
             # This environment switch also works with older yt-dlp releases
@@ -149,8 +207,8 @@ def download(config, url, send, cancelled):
                 raise ValueError('X could not provide a downloadable video. Please try again; yt-dlp may need an update.')
             if not final_path or not final_path.is_file() or final_path.stat().st_size == 0:
                 raise ValueError('The downloader did not produce a complete video file.')
-            completed = True
-            send({'status': 'complete', 'filename': final_path.name})
+            publish_video(final_path, destination, selected_state)
+            send({'status': 'complete', 'filename': destination.name})
     except (OSError, ValueError, subprocess.SubprocessError, TimeoutError) as error:
         send({'status': 'error', 'message': str(error)[:500]})
     finally:
@@ -158,12 +216,8 @@ def download(config, url, send, cancelled):
             stop_process(process)
             if process.stdout:
                 process.stdout.close()
-        if not completed:
-            # Remove only files bearing this request's random token, including
-            # partial fragments left by cancellation or a failed merge.
-            for partial in output_dir.glob(f'X-*-{token}.*'):
-                if partial.is_file():
-                    partial.unlink(missing_ok=True)
+        if staging:
+            staging.cleanup()
 
 
 def run(config, input_stream, output_stream, origin):

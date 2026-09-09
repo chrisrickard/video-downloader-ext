@@ -1,9 +1,9 @@
 # Right-click downloads on X (macOS + Chrome)
 
 Right-click a video in an X post and select **Download this video**. A small
-progress panel appears at the bottom-right of the page. The complete MP4 is
-saved in your Downloads folder, and the panel disappears 3.5 seconds after
-completion. Errors stay visible until dismissed. No new tab opens.
+progress panel appears at the bottom-right of the page, and a macOS Save dialog
+lets you choose a filename and folder before downloading. Downloads is the
+default folder. The panel disappears 3.5 seconds after completion. Errors stay visible until dismissed. No new tab opens.
 
 Use **Cancel download** to stop it. Dismissing the panel or navigating away keeps
 the download running; keep Chrome open until it finishes. Refreshing X restores
@@ -45,14 +45,16 @@ extension settings itself.
   separate video/audio tracks into an MP4.
 - Browser cookies are not read or exported. Protected or login-only posts may
   fail with an explanatory error.
-- Downloads have unique filenames; cancellation removes only the current
-  request's partial files. At most two downloads run concurrently per extension.
+- The native Save dialog supplies the filename and folder; websites cannot
+  choose them. It confirms replacement of existing files. Downloads are staged
+  privately and moved into place only after completion, so cancellation or failure
+  preserves any existing destination file. At most two downloads run concurrently per extension.
 
 The helper and pinned executable paths are stored in
 `~/Library/Application Support/Blob Video Downloader/`. Its Chrome registration
 is `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.blob_video_downloader.ytdlp.json`.
 After upgrading Python or changing your tool installation paths, rerun the
-installer with the same extension ID. Update yt-dlp if X changes its API.
+installer with the same extension ID. Also rerun it after updating files in `native/`. Update yt-dlp if X changes its API.
 
 To uninstall the helper, remove that registration file and the helper directory.
 Downloaded videos are kept. Removing the extension in Chrome stops its menu and

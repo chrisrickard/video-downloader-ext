@@ -59,6 +59,9 @@ class NativeTests(unittest.TestCase):
         self.assertNotIn('--no-plugin-dirs', command)  # Compatibility with yt-dlp 2025.02.19.
         self.assertIn('/downloads/X-123-abc.%(ext)s', command)
         self.assertNotIn('--cookies-from-browser', command)
+        command = host.build_command({'yt_dlp': '/tools/yt-dlp', 'ffmpeg': '/tools/ffmpeg'},
+                                     'https://x.com/u/status/123', Path('/my 100% videos'), 'abc')
+        self.assertIn('/my 100%% videos/X-123-abc.%(ext)s', command)
 
     def test_cancel_stops_process_and_cleans_its_partial_file(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -78,10 +81,58 @@ class NativeTests(unittest.TestCase):
                 messages.append(message)
                 if message.get('percent') == 50:
                     cancelled.set()
-            host.download({'yt_dlp': str(fake), 'ffmpeg': '/unused', 'download_dir': str(folder)},
-                          'https://x.com/u/status/123', send, cancelled)
+            destination = folder / 'My chosen filename.mp4'
+            destination.write_text('keep this existing video')
+            with patch.object(host, 'choose_destination', return_value=destination):
+                host.download({'yt_dlp': str(fake), 'ffmpeg': '/unused', 'download_dir': str(folder)},
+                              'https://x.com/u/status/123', send, cancelled)
+            self.assertEqual(destination.read_text(), 'keep this existing video')
+            self.assertFalse(list(folder.glob('.blob-video-*')))
             self.assertEqual(messages[-1]['status'], 'cancelled')
             self.assertFalse(list(folder.glob('X-*')))
+
+    def test_cancel_save_dialog_never_starts_download(self):
+        messages = []
+        with patch.object(host, 'choose_destination', return_value=None), patch.object(host.subprocess, 'Popen') as spawn:
+            host.download({}, 'https://x.com/u/status/123', messages.append, threading.Event())
+            spawn.assert_not_called()
+        self.assertEqual(messages[-1]['status'], 'cancelled')
+
+    def test_save_chosen_name_and_replace_only_completed_video(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            source = folder / 'staging.mp4'
+            destination = folder / 'My trailer 日本語.mp4'
+            source.write_bytes(b'complete new video')
+            host.publish_video(source, destination, None)
+            self.assertEqual(destination.read_bytes(), b'complete new video')
+            source.write_bytes(b'updated complete video')
+            selected = host.file_state(destination)
+            host.publish_video(source, destination, selected)
+            self.assertEqual(destination.read_bytes(), b'updated complete video')
+            source.write_bytes(b'other video')
+            with self.assertRaises(ValueError):
+                host.publish_video(source, destination, selected)
+            self.assertEqual(destination.read_bytes(), b'updated complete video')
+
+    def test_success_uses_dialog_folder_and_filename(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            fake = folder / 'fake-downloader'
+            fake.write_text('#!' + sys.executable + '\n'
+                            'import sys\nfrom pathlib import Path\n'
+                            'output = sys.argv[sys.argv.index("-o") + 1].replace("%(ext)s", "mp4")\n'
+                            'Path(output).write_bytes(b"complete video")\n'
+                            'print("__BVD_FILE__" + output, flush=True)\n')
+            fake.chmod(0o700)
+            destination = folder / 'My own filename.mp4'
+            messages = []
+            with patch.object(host, 'choose_destination', return_value=destination):
+                host.download({'yt_dlp': str(fake), 'ffmpeg': '/unused'},
+                              'https://x.com/u/status/123', messages.append, threading.Event())
+            self.assertEqual(destination.read_bytes(), b'complete video')
+            self.assertEqual(messages[-1], {'status': 'complete', 'filename': destination.name})
+            self.assertFalse(list(folder.glob('.blob-video-*')))
 
 
 if __name__ == '__main__':
